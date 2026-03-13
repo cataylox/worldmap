@@ -40,4 +40,5 @@ Controls:
 
 ## Data source
 
-The earth texture is generated from Natural Earth `ne_110m_land` data, which is public domain.
+The globe uses `assets/earth_daymap.ppm` and `assets/earth_nightmap.ppm`, blended in real time with a smooth day/night transition.
+Those texture assets are sourced from [solarsystemscope.com](https://www.solarsystemscope.com/).

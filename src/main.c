@@ -28,7 +28,8 @@
 #define LATITUDE_STEP 5.0
 #define LONGITUDE_STEP 5.0
 #define ROTATION_SENSITIVITY 0.35f
-#define EARTH_TEXTURE_PATH "assets/earth.ppm"
+#define EARTH_DAY_TEXTURE_PATH "assets/earth_daymap.ppm"
+#define EARTH_NIGHT_TEXTURE_PATH "assets/earth_nightmap.ppm"
 
 typedef struct {
     int width;
@@ -36,7 +37,8 @@ typedef struct {
     GLuint earth_texture;
     int earth_texture_width;
     int earth_texture_height;
-    unsigned char *earth_base_pixels;
+    unsigned char *earth_day_pixels;
+    unsigned char *earth_night_pixels;
     unsigned char *earth_lit_pixels;
     time_t last_daylight_update;
     float yaw_degrees;
@@ -407,7 +409,12 @@ static float smoothstepf(float edge0, float edge1, float x) {
 }
 
 static void update_daylight_texture(AppState *app, const struct tm *utc_tm, double utc_hours, time_t now) {
-    if (app->last_daylight_update == now || !app->earth_base_pixels || !app->earth_lit_pixels) {
+    if (
+        app->last_daylight_update == now
+        || !app->earth_day_pixels
+        || !app->earth_night_pixels
+        || !app->earth_lit_pixels
+    ) {
         return;
     }
 
@@ -415,7 +422,6 @@ static void update_daylight_texture(AppState *app, const struct tm *utc_tm, doub
     double solar_declination = -23.44 * cos(day_angle);
     double declination_radians = degrees_to_radians(solar_declination);
     double subsolar_lon = wrap_longitude(180.0 - utc_hours * 15.0);
-    size_t total_bytes = (size_t) app->earth_texture_width * (size_t) app->earth_texture_height * 3U;
 
     for (int y = 0; y < app->earth_texture_height; ++y) {
         double lat = -90.0 + ((double) y + 0.5) * 180.0 / (double) app->earth_texture_height;
@@ -431,12 +437,15 @@ static void update_daylight_texture(AppState *app, const struct tm *utc_tm, doub
             float day_mix = smoothstepf(-0.18f, 0.08f, (float) incidence);
             float night_mix = 1.0f - day_mix;
             size_t index = ((size_t) y * (size_t) app->earth_texture_width + (size_t) x) * 3U;
-            float base_r = (float) app->earth_base_pixels[index] / 255.0f;
-            float base_g = (float) app->earth_base_pixels[index + 1] / 255.0f;
-            float base_b = (float) app->earth_base_pixels[index + 2] / 255.0f;
-            float lit_r = base_r * (0.18f + 0.82f * day_mix) + 0.02f * night_mix;
-            float lit_g = base_g * (0.18f + 0.82f * day_mix) + 0.03f * night_mix;
-            float lit_b = base_b * (0.24f + 0.76f * day_mix) + 0.10f * night_mix;
+            float day_r = (float) app->earth_day_pixels[index] / 255.0f;
+            float day_g = (float) app->earth_day_pixels[index + 1] / 255.0f;
+            float day_b = (float) app->earth_day_pixels[index + 2] / 255.0f;
+            float night_r = (float) app->earth_night_pixels[index] / 255.0f;
+            float night_g = (float) app->earth_night_pixels[index + 1] / 255.0f;
+            float night_b = (float) app->earth_night_pixels[index + 2] / 255.0f;
+            float lit_r = day_r * day_mix + night_r * night_mix;
+            float lit_g = day_g * day_mix + night_g * night_mix;
+            float lit_b = day_b * day_mix + night_b * night_mix;
 
             app->earth_lit_pixels[index] = (unsigned char) (clampf(lit_r, 0.0f, 1.0f) * 255.0f);
             app->earth_lit_pixels[index + 1] = (unsigned char) (clampf(lit_g, 0.0f, 1.0f) * 255.0f);
@@ -458,7 +467,6 @@ static void update_daylight_texture(AppState *app, const struct tm *utc_tm, doub
     );
     glBindTexture(GL_TEXTURE_2D, 0);
     app->last_daylight_update = now;
-    (void) total_bytes;
 }
 
 static void emit_textured_sphere_vertex(double lon, double lat, double radius) {
@@ -496,7 +504,7 @@ static void draw_textured_globe(const AppState *app) {
 static void draw_globe_graticule(void) {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glColor4f(0.46f, 0.56f, 0.70f, 0.16f);
+    glColor4f(0.46f, 0.56f, 0.70f, 0.26f);
     glLineWidth(1.0f);
 
     for (int lon = -180; lon <= 180; lon += 15) {
@@ -584,7 +592,7 @@ static void draw_globe_timezone_labels(const struct tm *utc_tm) {
 
     for (int offset = -12; offset <= 12; ++offset) {
         double lon = (double) offset * 15.0;
-        double lat = 0.0;
+        double lat = 10.0;
         double px;
         double py;
         double pz;
@@ -610,7 +618,7 @@ static void draw_globe_timezone_labels(const struct tm *utc_tm) {
 
         format_offset_clock(offset, utc_tm, buffer, sizeof(buffer));
         glColor3f(0.99f, 1.00f, 1.00f);
-        draw_surface_text(lon, lat, LABEL_RADIUS, 0.007 * label_scale, buffer);
+        draw_surface_text(lon, lat, LABEL_RADIUS, 0.005 * label_scale, buffer);
     }
 
     glDisable(GL_BLEND);
@@ -718,7 +726,8 @@ static bool init_window(
     app->earth_texture = 0;
     app->earth_texture_width = 0;
     app->earth_texture_height = 0;
-    app->earth_base_pixels = NULL;
+    app->earth_day_pixels = NULL;
+    app->earth_night_pixels = NULL;
     app->earth_lit_pixels = NULL;
     app->last_daylight_update = (time_t) -1;
     app->yaw_degrees = -30.0f;
@@ -726,11 +735,11 @@ static bool init_window(
     app->last_mouse_x = 0;
 
     if (!load_ppm_texture(
-        EARTH_TEXTURE_PATH,
+        EARTH_DAY_TEXTURE_PATH,
         &app->earth_texture,
         &app->earth_texture_width,
         &app->earth_texture_height,
-        &app->earth_base_pixels
+        &app->earth_day_pixels
     )) {
         glXMakeCurrent(display, None, NULL);
         glXDestroyContext(display, context);
@@ -739,11 +748,48 @@ static bool init_window(
         return false;
     }
 
+    {
+        GLuint night_texture = 0;
+        int night_width = 0;
+        int night_height = 0;
+
+        if (!load_ppm_texture(
+            EARTH_NIGHT_TEXTURE_PATH,
+            &night_texture,
+            &night_width,
+            &night_height,
+            &app->earth_night_pixels
+        )) {
+            glDeleteTextures(1, &app->earth_texture);
+            free(app->earth_day_pixels);
+            glXMakeCurrent(display, None, NULL);
+            glXDestroyContext(display, context);
+            XDestroyWindow(display, window);
+            XCloseDisplay(display);
+            return false;
+        }
+
+        glDeleteTextures(1, &night_texture);
+
+        if (night_width != app->earth_texture_width || night_height != app->earth_texture_height) {
+            fprintf(stderr, "Day and night textures must have matching dimensions.\n");
+            glDeleteTextures(1, &app->earth_texture);
+            free(app->earth_day_pixels);
+            free(app->earth_night_pixels);
+            glXMakeCurrent(display, None, NULL);
+            glXDestroyContext(display, context);
+            XDestroyWindow(display, window);
+            XCloseDisplay(display);
+            return false;
+        }
+    }
+
     app->earth_lit_pixels = malloc((size_t) app->earth_texture_width * (size_t) app->earth_texture_height * 3U);
     if (!app->earth_lit_pixels) {
         fprintf(stderr, "Failed to allocate daylight texture buffer.\n");
         glDeleteTextures(1, &app->earth_texture);
-        free(app->earth_base_pixels);
+        free(app->earth_day_pixels);
+        free(app->earth_night_pixels);
         glXMakeCurrent(display, None, NULL);
         glXDestroyContext(display, context);
         XDestroyWindow(display, window);
@@ -761,7 +807,7 @@ int main(void) {
     Display *display = NULL;
     Window window = 0;
     GLXContext context = NULL;
-    AppState app = {WINDOW_WIDTH, WINDOW_HEIGHT, 0, 0, 0, NULL, NULL, (time_t) -1, -30.0f, false, 0};
+    AppState app = {WINDOW_WIDTH, WINDOW_HEIGHT, 0, 0, 0, NULL, NULL, NULL, (time_t) -1, -30.0f, false, 0};
     bool running = true;
 
     if (!init_window(&display, &window, &context, &app)) {
@@ -821,7 +867,8 @@ int main(void) {
     if (app.earth_texture != 0) {
         glDeleteTextures(1, &app.earth_texture);
     }
-    free(app.earth_base_pixels);
+    free(app.earth_day_pixels);
+    free(app.earth_night_pixels);
     free(app.earth_lit_pixels);
 
     glXMakeCurrent(display, None, NULL);
