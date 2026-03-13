@@ -18,8 +18,8 @@
 #define CALLBACK
 #endif
 
-#define WINDOW_WIDTH 1440
-#define WINDOW_HEIGHT 810
+#define WINDOW_WIDTH 1920
+#define WINDOW_HEIGHT 1080
 #define PI 3.14159265358979323846
 #define GLOBE_RADIUS 1.55
 #define LABEL_RADIUS 1.67
@@ -846,8 +846,12 @@ int main(void) {
                     KeySym key = XLookupKeysym(&event.xkey, 0);
                     if (key == XK_Escape || key == XK_q) {
                         running = false;
-                    }
-                    break;
+                    } else if (key == XK_Right) {
+			    app.yaw_degrees += 0.5;
+		    } else if (key == XK_Left) {
+			    app.yaw_degrees -= 0.5;
+		    }
+		    break;
                 }
                 case ClientMessage:
                     running = false;
