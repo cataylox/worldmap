@@ -23,7 +23,7 @@
 #define PI 3.14159265358979323846
 #define GLOBE_RADIUS 1.55
 #define LABEL_RADIUS 1.67
-#define GRID_RADIUS 1.585
+#define GRID_RADIUS 1.56
 #define CAMERA_DISTANCE 4.6
 #define LATITUDE_STEP 5.0
 #define LONGITUDE_STEP 5.0
@@ -62,10 +62,13 @@ static const unsigned char FONT_DIGITS[10][7] = {
 static const unsigned char FONT_PLUS[7] = {0x00, 0x04, 0x04, 0x1F, 0x04, 0x04, 0x00};
 static const unsigned char FONT_MINUS[7] = {0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00};
 static const unsigned char FONT_COLON[7] = {0x00, 0x04, 0x04, 0x00, 0x04, 0x04, 0x00};
+static const unsigned char FONT_PERIOD[7] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x04};
 static const unsigned char FONT_SPACE[7] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 static const unsigned char FONT_U[7] = {0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E};
 static const unsigned char FONT_T[7] = {0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04};
 static const unsigned char FONT_C[7] = {0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E};
+static const unsigned char FONT_D[7] = {0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E};
+static const unsigned char FONT_E[7] = {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F};
 
 static const unsigned char *glyph_for_char(char c) {
     if (c >= '0' && c <= '9') {
@@ -79,6 +82,8 @@ static const unsigned char *glyph_for_char(char c) {
             return FONT_MINUS;
         case ':':
             return FONT_COLON;
+        case '.':
+            return FONT_PERIOD;
         case ' ':
             return FONT_SPACE;
         case 'U':
@@ -87,6 +92,10 @@ static const unsigned char *glyph_for_char(char c) {
             return FONT_T;
         case 'C':
             return FONT_C;
+        case 'D':
+            return FONT_D;
+        case 'E':
+            return FONT_E;
         default:
             return FONT_SPACE;
     }
@@ -207,6 +216,9 @@ static void compute_surface_frame(
     *north_y = cos(lat_radians);
     *north_z = -sin(lat_radians) * cos(lon_radians);
 }
+
+static void emit_textured_sphere_vertex(double lon, double lat, double radius);
+static void emit_colored_sphere_vertex(double lon, double lat, double radius);
 
 static void emit_surface_offset_vertex(
     double radius,
@@ -408,6 +420,44 @@ static float smoothstepf(float edge0, float edge1, float x) {
     return t * t * (3.0f - 2.0f * t);
 }
 
+static void compute_solar_position(const struct tm *utc_tm, double utc_hours, double *declination_radians, double *subsolar_lon) {
+    double day_of_year = (double) utc_tm->tm_yday + 1.0;
+    double gamma = 2.0 * PI / 365.0 * (day_of_year - 1.0 + (utc_hours - 12.0) / 24.0);
+    double equation_of_time_minutes =
+        229.18 * (
+            0.000075
+            + 0.001868 * cos(gamma)
+            - 0.032077 * sin(gamma)
+            - 0.014615 * cos(2.0 * gamma)
+            - 0.040849 * sin(2.0 * gamma)
+        );
+    double declination =
+        0.006918
+        - 0.399912 * cos(gamma)
+        + 0.070257 * sin(gamma)
+        - 0.006758 * cos(2.0 * gamma)
+        + 0.000907 * sin(2.0 * gamma)
+        - 0.002697 * cos(3.0 * gamma)
+        + 0.001480 * sin(3.0 * gamma);
+    double utc_minutes = utc_hours * 60.0;
+
+    *declination_radians = declination;
+    *subsolar_lon = wrap_longitude((720.0 - utc_minutes - equation_of_time_minutes) / 4.0);
+}
+
+static void compute_solar_vector(const struct tm *utc_tm, double utc_hours, double *sun_x, double *sun_y, double *sun_z) {
+    double declination_radians;
+    double subsolar_lon;
+    double cos_declination;
+
+    compute_solar_position(utc_tm, utc_hours, &declination_radians, &subsolar_lon);
+    cos_declination = cos(declination_radians);
+
+    *sun_x = cos_declination * sin(degrees_to_radians(subsolar_lon));
+    *sun_y = sin(declination_radians);
+    *sun_z = cos_declination * cos(degrees_to_radians(subsolar_lon));
+}
+
 static void update_daylight_texture(AppState *app, const struct tm *utc_tm, double utc_hours, time_t now) {
     if (
         app->last_daylight_update == now
@@ -418,23 +468,25 @@ static void update_daylight_texture(AppState *app, const struct tm *utc_tm, doub
         return;
     }
 
-    double day_angle = (2.0 * PI * ((double) utc_tm->tm_yday + 10.0)) / 365.2422;
-    double solar_declination = -23.44 * cos(day_angle);
-    double declination_radians = degrees_to_radians(solar_declination);
-    double subsolar_lon = wrap_longitude(180.0 - utc_hours * 15.0);
+    double sun_x;
+    double sun_y;
+    double sun_z;
+
+    compute_solar_vector(utc_tm, utc_hours, &sun_x, &sun_y, &sun_z);
 
     for (int y = 0; y < app->earth_texture_height; ++y) {
         double lat = -90.0 + ((double) y + 0.5) * 180.0 / (double) app->earth_texture_height;
-        double lat_radians = degrees_to_radians(lat);
-        double sin_lat = sin(lat_radians);
-        double cos_lat = cos(lat_radians);
 
         for (int x = 0; x < app->earth_texture_width; ++x) {
             double lon = -180.0 + ((double) x + 0.5) * 360.0 / (double) app->earth_texture_width;
-            double hour_angle = degrees_to_radians(wrap_longitude(lon - subsolar_lon));
-            double incidence = sin_lat * sin(declination_radians)
-                + cos_lat * cos(declination_radians) * cos(hour_angle);
-            float day_mix = smoothstepf(-0.18f, 0.08f, (float) incidence);
+            double nx;
+            double ny;
+            double nz;
+            double incidence;
+
+            geo_to_cartesian(lon, lat, 1.0, &nx, &ny, &nz);
+            incidence = nx * sun_x + ny * sun_y + nz * sun_z;
+            float day_mix = smoothstepf(-0.05f, 0.03f, (float) incidence);
             float night_mix = 1.0f - day_mix;
             size_t index = ((size_t) y * (size_t) app->earth_texture_width + (size_t) x) * 3U;
             float day_r = (float) app->earth_day_pixels[index] / 255.0f;
@@ -469,6 +521,43 @@ static void update_daylight_texture(AppState *app, const struct tm *utc_tm, doub
     app->last_daylight_update = now;
 }
 
+static void draw_day_night_overlay(const struct tm *utc_tm, double utc_hours) {
+    double sun_x;
+    double sun_y;
+    double sun_z;
+
+    compute_solar_vector(utc_tm, utc_hours, &sun_x, &sun_y, &sun_z);
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+
+    for (double lat = -90.0; lat < 90.0; lat += 2.0) {
+        glBegin(GL_QUAD_STRIP);
+        for (double lon = -180.0; lon <= 180.0; lon += 2.0) {
+            for (int step = 0; step < 2; ++step) {
+                double sample_lat = lat + (step == 0 ? 2.0 : 0.0);
+                double nx;
+                double ny;
+                double nz;
+                double incidence;
+                float night_alpha;
+                
+                geo_to_cartesian(lon, sample_lat, 1.0, &nx, &ny, &nz);
+                incidence = nx * sun_x + ny * sun_y + nz * sun_z;
+                night_alpha = 0.62f * (1.0f - smoothstepf(-0.30f, -0.02f, (float) incidence));
+                
+                glColor4f(0.02f, 0.04f, 0.10f, night_alpha);
+                emit_colored_sphere_vertex(lon, sample_lat, GLOBE_RADIUS + 0.001);
+            }
+        }
+        glEnd();
+    }
+
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+}
+
 static void emit_textured_sphere_vertex(double lon, double lat, double radius) {
     double x;
     double y;
@@ -479,6 +568,16 @@ static void emit_textured_sphere_vertex(double lon, double lat, double radius) {
     geo_to_cartesian(lon, lat, radius, &x, &y, &z);
     glColor3f(1.0f, 1.0f, 1.0f);
     glTexCoord2f(u, v);
+    glNormal3d(x / radius, y / radius, z / radius);
+    glVertex3d(x, y, z);
+}
+
+static void emit_colored_sphere_vertex(double lon, double lat, double radius) {
+    double x;
+    double y;
+    double z;
+
+    geo_to_cartesian(lon, lat, radius, &x, &y, &z);
     glNormal3d(x / radius, y / radius, z / radius);
     glVertex3d(x, y, z);
 }
@@ -552,7 +651,12 @@ static void format_offset_clock(int offset, const struct tm *utc_tm, char *buffe
     snprintf(buffer, size, "%+03d %02d:%02d", offset, total_minutes / 60, total_minutes % 60);
 }
 
-static void draw_utc_overlay(int width, int height, const struct tm *utc_tm) {
+static void format_declination(double declination_radians, char *buffer, size_t size) {
+    double declination_degrees = declination_radians * 180.0 / PI;
+    snprintf(buffer, size, "DEC %+04.1f", declination_degrees);
+}
+
+static void draw_utc_overlay(int width, int height, const struct tm *utc_tm, double declination_radians) {
     char buffer[32];
 
     set_ortho_projection(width, height);
@@ -561,10 +665,12 @@ static void draw_utc_overlay(int width, int height, const struct tm *utc_tm) {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     glColor4f(0.00f, 0.00f, 0.00f, 0.34f);
-    draw_rect(18.0f, 18.0f, 170.0f, 44.0f);
+    draw_rect(18.0f, 18.0f, 300.0f, 44.0f);
     glColor3f(0.99f, 1.00f, 1.00f);
     format_utc_clock(utc_tm, buffer, sizeof(buffer));
     draw_pixel_text(28.0f, 24.0f, 2.0f, buffer);
+    format_declination(declination_radians, buffer, sizeof(buffer));
+    draw_pixel_text(180.0f, 24.0f, 2.0f, buffer);
 
     glColor4f(0.68f, 0.84f, 0.95f, 0.40f);
     draw_outline_rect(8.0f, 8.0f, (float) width - 8.0f, (float) height - 8.0f);
@@ -629,6 +735,8 @@ static void render_frame(AppState *app) {
     time_t now;
     struct tm utc_tm;
     double utc_hours;
+    double declination_radians;
+    double subsolar_lon;
 
     gettimeofday(&tv, NULL);
     now = tv.tv_sec;
@@ -637,6 +745,7 @@ static void render_frame(AppState *app) {
         + (double) utc_tm.tm_min / 60.0
         + (double) utc_tm.tm_sec / 3600.0
         + (double) tv.tv_usec / 3600000000.0;
+    compute_solar_position(&utc_tm, utc_hours, &declination_radians, &subsolar_lon);
 
     update_daylight_texture(app, &utc_tm, utc_hours, now);
     draw_background(app->width, app->height);
@@ -649,9 +758,10 @@ static void render_frame(AppState *app) {
 
     set_perspective_projection(app);
     draw_textured_globe(app);
+    draw_day_night_overlay(&utc_tm, utc_hours);
     draw_globe_graticule();
     draw_globe_timezone_labels(&utc_tm);
-    draw_utc_overlay(app->width, app->height, &utc_tm);
+    draw_utc_overlay(app->width, app->height, &utc_tm, declination_radians);
 }
 
 static bool init_window(
@@ -847,9 +957,9 @@ int main(void) {
                     if (key == XK_Escape || key == XK_q) {
                         running = false;
                     } else if (key == XK_Right) {
-			    app.yaw_degrees += 0.5;
-		    } else if (key == XK_Left) {
-			    app.yaw_degrees -= 0.5;
+        			    app.yaw_degrees += 0.5;
+        		    } else if (key == XK_Left) {
+        			    app.yaw_degrees -= 0.5;
 		    }
 		    break;
                 }
