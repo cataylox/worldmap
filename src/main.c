@@ -42,8 +42,10 @@ typedef struct {
     unsigned char *earth_lit_pixels;
     time_t last_daylight_update;
     float yaw_degrees;
+    float pitch_degrees;
     bool dragging;
     int last_mouse_x;
+    int last_mouse_y;
 } AppState;
 
 static const unsigned char FONT_DIGITS[10][7] = {
@@ -145,7 +147,7 @@ static void set_perspective_projection(const AppState *app) {
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
     glTranslated(0.0, 0.0, -CAMERA_DISTANCE);
-    glRotated(18.0, 1.0, 0.0, 0.0);
+    glRotated(18.0 + app->pitch_degrees, 1.0, 0.0, 0.0);
     glRotated(app->yaw_degrees, 0.0, 1.0, 0.0);
 }
 
@@ -841,8 +843,10 @@ static bool init_window(
     app->earth_lit_pixels = NULL;
     app->last_daylight_update = (time_t) -1;
     app->yaw_degrees = -30.0f;
+    app->pitch_degrees = 0.0f;
     app->dragging = false;
     app->last_mouse_x = 0;
+    app->last_mouse_y = 0;
 
     if (!load_ppm_texture(
         EARTH_DAY_TEXTURE_PATH,
@@ -917,7 +921,7 @@ int main(void) {
     Display *display = NULL;
     Window window = 0;
     GLXContext context = NULL;
-    AppState app = {WINDOW_WIDTH, WINDOW_HEIGHT, 0, 0, 0, NULL, NULL, NULL, (time_t) -1, -30.0f, false, 0};
+    AppState app = {WINDOW_WIDTH, WINDOW_HEIGHT, 0, 0, 0, NULL, NULL, NULL, (time_t) -1, -30.0f, 0.0f, false, 0, 0};
     bool running = true;
 
     if (!init_window(&display, &window, &context, &app)) {
@@ -938,6 +942,7 @@ int main(void) {
                     if (event.xbutton.button == Button1) {
                         app.dragging = true;
                         app.last_mouse_x = event.xbutton.x;
+                        app.last_mouse_y = event.xbutton.y;
                     }
                     break;
                 case ButtonRelease:
@@ -948,8 +953,15 @@ int main(void) {
                 case MotionNotify:
                     if (app.dragging) {
                         int dx = event.xmotion.x - app.last_mouse_x;
+                        int dy = event.xmotion.y - app.last_mouse_y;
                         app.yaw_degrees += (float) dx * ROTATION_SENSITIVITY;
+                        app.pitch_degrees = clampf(
+                            app.pitch_degrees + (float) dy * ROTATION_SENSITIVITY,
+                            -20.0f,
+                            20.0f
+                        );
                         app.last_mouse_x = event.xmotion.x;
+                        app.last_mouse_y = event.xmotion.y;
                     }
                     break;
                 case KeyPress: {
