@@ -66,13 +66,14 @@ static const unsigned char FONT_MINUS[7] = {0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 
 static const unsigned char FONT_COLON[7] = {0x00, 0x04, 0x04, 0x00, 0x04, 0x04, 0x00};
 static const unsigned char FONT_PERIOD[7] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x04};
 static const unsigned char FONT_SPACE[7] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+static const unsigned char FONT_DEGREE[7] = {0x0E, 0x11, 0x11, 0x0E, 0x00, 0x00, 0x00};
 static const unsigned char FONT_U[7] = {0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E};
 static const unsigned char FONT_T[7] = {0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04};
 static const unsigned char FONT_C[7] = {0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E};
 static const unsigned char FONT_D[7] = {0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E};
 static const unsigned char FONT_E[7] = {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F};
 
-static const unsigned char *glyph_for_char(char c) {
+static const unsigned char *glyph_for_char(unsigned char c) {
     if (c >= '0' && c <= '9') {
         return FONT_DIGITS[c - '0'];
     }
@@ -98,6 +99,8 @@ static const unsigned char *glyph_for_char(char c) {
             return FONT_D;
         case 'E':
             return FONT_E;
+        case 0xB0:
+            return FONT_DEGREE;
         default:
             return FONT_SPACE;
     }
@@ -655,7 +658,7 @@ static void format_offset_clock(int offset, const struct tm *utc_tm, char *buffe
 
 static void format_declination(double declination_radians, char *buffer, size_t size) {
     double declination_degrees = declination_radians * 180.0 / PI;
-    snprintf(buffer, size, "DEC %+04.1f", declination_degrees);
+    snprintf(buffer, size, "DEC %+04.1f\xB0", declination_degrees);
 }
 
 static void draw_utc_overlay(int width, int height, const struct tm *utc_tm, double declination_radians) {
