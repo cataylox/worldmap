@@ -491,7 +491,7 @@ static void update_daylight_texture(AppState *app, const struct tm *utc_tm, doub
 
             geo_to_cartesian(lon, lat, 1.0, &nx, &ny, &nz);
             incidence = nx * sun_x + ny * sun_y + nz * sun_z;
-            float day_mix = smoothstepf(-0.05f, 0.03f, (float) incidence);
+            float day_mix = smoothstepf(-0.15f, 0.12f, (float) incidence);
             float night_mix = 1.0f - day_mix;
             size_t index = ((size_t) y * (size_t) app->earth_texture_width + (size_t) x) * 3U;
             float day_r = (float) app->earth_day_pixels[index] / 255.0f;
@@ -550,7 +550,7 @@ static void draw_day_night_overlay(const struct tm *utc_tm, double utc_hours) {
                 
                 geo_to_cartesian(lon, sample_lat, 1.0, &nx, &ny, &nz);
                 incidence = nx * sun_x + ny * sun_y + nz * sun_z;
-                night_alpha = 0.62f * (1.0f - smoothstepf(-0.30f, -0.02f, (float) incidence));
+                night_alpha = 0.62f * (1.0f - smoothstepf(-0.40f, 0.08f, (float) incidence));
                 
                 glColor4f(0.02f, 0.04f, 0.10f, night_alpha);
                 emit_colored_sphere_vertex(lon, sample_lat, GLOBE_RADIUS + 0.001);
